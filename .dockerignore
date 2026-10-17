@@ -1,0 +1,14 @@
+.venv
+venv
+__pycache__
+.pytest_cache
+*.pyc
+.env
+.env.*
+.git
+*.backup
+data/misan.db
+data/raw
+data/processed
+data/reports
+tests

@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+*.egg-info/
+.pytest_cache/
+
+# Runtime data — never commit generated datasets, models or the operational database
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/models/*
+!data/models/.gitkeep
+!data/models/latest.json
+!data/models/v20261009-193315/
+!data/models/v20261009-193315/**
+data/reports/*
+!data/reports/.gitkeep
+data/misan.db
+
+.DS_Store
+.streamlit/secrets.toml
+
+# Local recovery backups — keep out of the deployment repository
+*.backup_*
+backups/
