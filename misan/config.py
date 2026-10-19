@@ -10,7 +10,15 @@ from typing import Literal
 import yaml
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = ROOT_DIR / "config"
+
+# Support both the source checkout and an installed package on Railway.
+_SOURCE_CONFIG_DIR = ROOT_DIR / "config"
+_PACKAGED_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+
+if (_SOURCE_CONFIG_DIR / "faults.yaml").is_file():
+    CONFIG_DIR = _SOURCE_CONFIG_DIR
+else:
+    CONFIG_DIR = _PACKAGED_CONFIG_DIR
 
 
 def _getenv(name: str, default: str) -> str:

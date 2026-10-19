@@ -1,0 +1,44 @@
+# Fault taxonomy for the Misan MVP (PRD Section 5.1).
+# Adding a fault = add an entry here + a signature entry in signatures.yaml + training data.
+# "code" values must stay stable: they are used as the model's class labels.
+
+classes:
+  - code: NORMAL
+    name: Healthy operation
+    component: whole_cycle
+    group: none
+
+  - code: CMP-DEG
+    name: Compressor efficiency degradation
+    component: compressor
+    group: mechanical
+
+  - code: EXV-STICK
+    name: Expansion valve sticking or restricted
+    component: expansion_valve
+    group: mechanical
+
+  - code: CND-FOUL
+    name: Condenser fouling
+    component: condenser
+    group: thermal
+
+  - code: EVP-FOUL
+    name: Evaporator fouling or reduced airflow
+    component: evaporator
+    group: thermal
+
+  - code: REF-LEAK
+    name: Refrigerant undercharge
+    component: whole_cycle
+    group: thermal
+
+  - code: SNS-DRIFT
+    name: Sensor drift (suction_temperature in the MVP)
+    component: sensor
+    group: control
+
+  - code: SP-ERR
+    name: Faulty set-point
+    component: control
+    group: control

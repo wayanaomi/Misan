@@ -1,0 +1,58 @@
+# Lightweight fault-signature consistency check (PRD FR-21).
+# For each fault class, the expected direction of change (vs a healthy baseline window)
+# in key derived/raw features. A diagnosis is REJECTED if the majority of its signature
+# checks contradict the observed window; CONFIRMED if the majority agree; UNCHECKED if
+# the class has no signature defined (e.g. NORMAL) or insufficient baseline data exists.
+# This is a preliminary consistency check, not the full physics model (FR-22 replaces it later).
+
+NORMAL: []
+
+CMP-DEG:
+  - feature: discharge_pressure_mean
+    direction: high
+  - feature: compressor_power_mean
+    direction: high
+  - feature: compression_ratio_mean
+    direction: high
+
+EXV-STICK:
+  - feature: superheat_mean
+    direction: high
+  - feature: evaporator_outlet_temperature_mean
+    direction: high
+  - feature: refrigerant_mass_flow_mean
+    direction: low
+
+CND-FOUL:
+  - feature: discharge_pressure_mean
+    direction: high
+  - feature: condenser_approach_mean
+    direction: high
+  - feature: compressor_power_mean
+    direction: high
+
+EVP-FOUL:
+  - feature: evaporator_approach_mean
+    direction: high
+  - feature: suction_pressure_mean
+    direction: low
+  - feature: superheat_mean
+    direction: high
+
+REF-LEAK:
+  - feature: suction_pressure_mean
+    direction: low
+  - feature: discharge_pressure_mean
+    direction: low
+  - feature: superheat_mean
+    direction: high
+  - feature: refrigerant_mass_flow_mean
+    direction: low
+
+SNS-DRIFT:
+  - feature: suction_temperature_slope
+    direction: high
+
+SP-ERR:
+  - feature: load_setpoint_mean
+    direction: high
