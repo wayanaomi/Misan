@@ -57,8 +57,11 @@ app = FastAPI(
 @app.get("/health")
 def health() -> dict:
     active = get_active_model_version()
-    return {"status": "ok", "active_model_version": active["version"] if active else None}
-
+    version = active["version"] if active else training.load_latest_version()
+    return {
+        "status": "ok",
+        "active_model_version": version,
+    }
 
 @app.get("/faults")
 def faults() -> list[dict]:
@@ -89,8 +92,20 @@ def recent_diagnostics(limit: int = 20) -> list[dict]:
 
 @app.get("/models/active")
 def active_model() -> dict | None:
-    return get_active_model_version()
+    active = get_active_model_version()
+    if active:
+        return active
 
+    version = training.load_latest_version()
+    if version is None:
+        return None
+
+    return {
+        "version": version,
+        "model_type": "trained",
+        "created_at": None,
+        "metrics": {},
+    }
 
 @app.get("/models/evaluations")
 def evaluations(limit: int = 10) -> list[dict]:
