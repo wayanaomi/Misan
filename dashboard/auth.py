@@ -20,7 +20,7 @@ def require_demo_password() -> None:
     if st.session_state.get("misan_authenticated") is True:
         return
 
-    st.title("MISAN Demo Access")
+    st.title("MISAN Access")
     supplied = st.text_input("Demo password", type="password")
     if st.button("Unlock dashboard", type="primary"):
         if hmac.compare_digest(supplied, expected):

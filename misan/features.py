@@ -46,7 +46,32 @@ def saturation_temperature_kpa_to_c(pressure_kpa: pd.Series | np.ndarray) -> np.
     return np.polyval(_SAT_COEFFS, pressure)
 
 
+
+def validate_feature_inputs(df: pd.DataFrame) -> None:
+    """Reject absent physical inputs instead of producing NaN thermodynamic features."""
+    required = list(SENSOR_NAMES)
+    missing = [name for name in required if name not in df.columns]
+    if missing:
+        raise ValueError(
+            "Cannot calculate HVAC features: missing required sensor signals: "
+            + ", ".join(missing)
+        )
+
+    numeric = df[required].apply(pd.to_numeric, errors="coerce")
+    invalid = [
+        name for name in required
+        if numeric[name].isna().any()
+        or not np.isfinite(numeric[name].to_numpy(dtype=float)).all()
+    ]
+    if invalid:
+        raise ValueError(
+            "Cannot calculate HVAC features: missing or non-finite readings in: "
+            + ", ".join(invalid)
+        )
+
+
 def add_thermo_features(df: pd.DataFrame, eps: float = 1e-6) -> pd.DataFrame:
+    validate_feature_inputs(df)
     df = df.copy()
     t_sat_suction = saturation_temperature_kpa_to_c(df["suction_pressure"])
     t_sat_discharge = saturation_temperature_kpa_to_c(df["discharge_pressure"])

@@ -13,7 +13,48 @@ import pandas as pd
 from misan.config import SENSOR_BY_NAME, SENSOR_NAMES
 from misan.schemas import DataQuality
 
+
 REQUIRED_META_COLUMNS = {"timestamp", "asset_id"}
+
+# Only direct, semantically defensible mappings. No physical sensor values
+# are inferred or synthesized by this mapping.
+HVAC_SOURCE_COLUMN_MAP = {
+    "unit_id": "asset_id",
+    "suction_pressure_kpa": "suction_pressure",
+    "discharge_pressure_kpa": "discharge_pressure",
+    "suction_temp_c": "suction_temperature",
+    "discharge_temp_c": "discharge_temperature",
+    "compressor_power_kw": "compressor_power",
+    "ambient_temp_c": "ambient_temperature",
+}
+
+def assess_dataset_schema(df: pd.DataFrame) -> dict:
+    """Assess import compatibility without modifying or fabricating measurements."""
+    source_columns = list(df.columns)
+    mapped = {
+        source: target for source, target in HVAC_SOURCE_COLUMN_MAP.items()
+        if source in df.columns and target not in df.columns
+    }
+    available_after_mapping = set(source_columns)
+    available_after_mapping.update(mapped.values())
+
+    missing_meta = sorted(REQUIRED_META_COLUMNS - available_after_mapping)
+    missing_signals = [name for name in SENSOR_NAMES if name not in available_after_mapping]
+    missing_training = [
+        name for name in ("run_id", "fault_class")
+        if name not in available_after_mapping
+    ]
+    return {
+        "source_columns": source_columns,
+        "proposed_column_mapping": mapped,
+        "missing_required_metadata": missing_meta,
+        "missing_sensor_signals": missing_signals,
+        "missing_training_columns": missing_training,
+        "schema_compatible": not missing_meta and not missing_signals,
+        "ready_for_training": not missing_meta and not missing_signals and not missing_training,
+        "note": "Missing physical measurements are not generated or imputed.",
+    }
+
 
 
 def read_raw(path: str | Path) -> pd.DataFrame:
@@ -26,6 +67,18 @@ def read_raw(path: str | Path) -> pd.DataFrame:
     else:
         raise ValueError(f"unsupported file type: {path.suffix} (expected .csv or .parquet)")
     return df
+
+
+
+def normalize_source_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename known source headers only; never synthesize missing sensor readings."""
+    df = df.copy()
+    rename = {
+        source: target
+        for source, target in HVAC_SOURCE_COLUMN_MAP.items()
+        if source in df.columns and target not in df.columns
+    }
+    return df.rename(columns=rename)
 
 
 def validate_schema(df: pd.DataFrame) -> list[str]:

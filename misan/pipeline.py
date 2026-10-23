@@ -95,10 +95,20 @@ def diagnose_window(window: SensorWindow, confidence_threshold: float | None = N
     if not quality.sufficient:
         raise InsufficientDataError(quality.notes)
 
-    feature_row = pd.Series(window_feature_vector(window_df))
+    try:
+        feature_row = pd.Series(window_feature_vector(window_df), dtype=float)
+    except (ValueError, KeyError) as exc:
+        raise InsufficientDataError([str(exc)]) from exc
+
+    import numpy as np
     X = feature_row.to_frame().T
     for col in X.columns:
         X[col] = pd.to_numeric(X[col], errors="coerce")
+    if not np.isfinite(X.to_numpy(dtype=float)).all():
+        raise InsufficientDataError([
+            "diagnostic features contain missing or non-finite values; "
+            "check required sensor readings and units"
+        ])
 
     is_faulty_pred = bool(bundle.detection_model.predict_is_faulty(X)[0])
     alert = _persistence_tracker.update(window.asset_id, is_faulty_pred)
