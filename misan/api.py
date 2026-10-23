@@ -149,17 +149,86 @@ async def import_dataset(file: UploadFile = File(...)) -> JSONResponse:
 
     try:
         raw_df = ingestion.read_raw(dest)
-        problems = ingestion.validate_schema(raw_df)
-        if problems:
+        schema_report = ingestion.assess_dataset_schema(raw_df)
+        normalized_df = ingestion.normalize_source_columns(raw_df)
+        problems = ingestion.validate_schema(normalized_df)
+
+        # A dataset needs a timestamp and equipment identifier to be registered.
+        if "timestamp" not in normalized_df.columns or "asset_id" not in normalized_df.columns:
             dest.unlink(missing_ok=True)
-            raise HTTPException(status_code=422, detail={"message": "schema validation failed", "problems": problems})
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Dataset needs a timestamp and an identifiable equipment column.",
+                    "schema_report": schema_report,
+                    "problems": problems,
+                },
+            )
+
+        if problems:
+            # Save only the recognized header normalization. Never invent sensor readings.
+            if dest.suffix.lower() == ".csv":
+                normalized_df.to_csv(dest, index=False)
+            else:
+                normalized_df.to_parquet(dest, index=False)
+
+            missing = schema_report["missing_sensor_signals"]
+            dataset_id = register_dataset(
+                name=safe_name,
+                path=str(dest),
+                source="imported",
+                n_rows=len(normalized_df),
+                notes=(
+                    "Imported for inspection; incompatible with the current model. "
+                    "Missing sensor signals: " + ", ".join(missing)
+                ),
+            )
+            return JSONResponse({
+                "dataset_id": dataset_id,
+                "n_rows": len(normalized_df),
+                "data_quality": {
+                    "missing_value_count": 0,
+                    "out_of_range_count": 0,
+                    "sample_count": len(normalized_df),
+                    "sufficient": False,
+                    "notes": [
+                        "Imported for inspection only. Current-model diagnosis is unavailable."
+                    ],
+                },
+                "schema_report": schema_report,
+                "compatible_with_current_model": False,
+            })
+
+        raw_df = normalized_df
+
+        # Persist normalized headers so later training and diagnosis read
+        # the same schema that passed validation.
+        if dest.suffix.lower() == ".csv":
+            raw_df.to_csv(dest, index=False)
+        else:
+            raw_df.to_parquet(dest, index=False)
+
         _, quality = ingestion.clean(raw_df)
-    except ValueError as exc:
+
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as exc:
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    dataset_id = register_dataset(name=safe_name, path=str(dest), source="imported", n_rows=len(raw_df))
-    return JSONResponse({"dataset_id": dataset_id, "n_rows": len(raw_df), "data_quality": quality.model_dump()})
+    dataset_id = register_dataset(
+        name=safe_name,
+        path=str(dest),
+        source="imported",
+        n_rows=len(raw_df),
+    )
+    return JSONResponse({
+        "dataset_id": dataset_id,
+        "n_rows": len(raw_df),
+        "data_quality": quality.model_dump(),
+        "schema_report": schema_report,
+        "compatible_with_current_model": True,
+    })
 
 
 @app.post("/train", dependencies=[Depends(require_api_key)])

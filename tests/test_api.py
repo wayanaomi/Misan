@@ -86,3 +86,32 @@ def test_health_remains_public_when_api_key_is_configured(monkeypatch):
     monkeypatch.setenv("MISAN_API_KEY", "test-secret")
     response = client.get("/health")
     assert response.status_code == 200
+
+
+
+def test_import_incompatible_historian_schema_for_inspection(monkeypatch):
+    import io
+    import os
+
+    monkeypatch.setenv("MISAN_API_KEY", "test-secret")
+    csv_content = (
+        "timestamp,unit_id,ambient_temp_c,suction_pressure_kpa,"
+        "discharge_pressure_kpa,suction_temp_c,discharge_temp_c,"
+        "compressor_power_kw,fault_class\\n"
+        "2026-10-12 00:00:00,RTU-01,24.82,868.5,2243.5,12.3,68.96,5.34,NORMAL\\n"
+        "2026-10-12 00:01:00,RTU-01,24.90,869.0,2240.0,12.4,68.8,5.30,NORMAL\\n"
+    )
+
+    response = client.post(
+        "/datasets/import",
+        headers={"X-Misan-API-Key": "test-secret"},
+        files={"file": ("historian.csv", io.BytesIO(csv_content.encode()), "text/csv")},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["compatible_with_current_model"] is False
+    assert body["schema_report"]["proposed_column_mapping"]["unit_id"] == "asset_id"
+    assert "suction_pressure" not in body["schema_report"]["missing_sensor_signals"]
+    assert "refrigerant_mass_flow" in body["schema_report"]["missing_sensor_signals"]
+    assert "dataset_id" in body

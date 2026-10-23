@@ -32,6 +32,20 @@ if uploaded is not None and st.button("Import"):
         st.success(f'Imported {result["n_rows"]} rows (dataset id {result["dataset_id"]}).')
         q = result["data_quality"]
         st.json(q)
+
+        compatible = result.get("compatible_with_current_model", True)
+        if compatible:
+            st.success("Dataset schema is compatible with the current model.")
+        else:
+            st.warning(
+                "Dataset imported for inspection only. It cannot be used for diagnosis "
+                "with the current model until the missing sensor signals are addressed."
+            )
+
+        schema_report = result.get("schema_report")
+        if schema_report:
+            st.markdown("**Schema compatibility report**")
+            st.json(schema_report)
     except ApiError as exc:
         st.error(str(exc))
 
