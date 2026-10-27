@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import streamlit as st
+import pandas as pd
 from api_client import ApiError, datasets, diagnose, import_dataset, train
 from theme import inject_css, page_header
 
@@ -49,6 +50,129 @@ if uploaded is not None and st.button("Import"):
     except ApiError as exc:
         st.error(str(exc))
 
+
+def render_historian_inspection(dataset_path: str) -> None:
+    """Inspect historian-style CSV data without treating labels as verified diagnoses."""
+    st.markdown("##### Historian dataset inspection")
+    st.caption(
+        "Exploratory analysis of the uploaded readings and their supplied labels. "
+        "These labels are not independently verified fault diagnoses."
+    )
+
+    try:
+        df = ingestion.read_raw(dataset_path)
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Could not read this dataset for inspection: {exc}")
+        return
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        st.info("This dataset is empty or could not be interpreted as a table.")
+        return
+
+    df = df.copy()
+    df.columns = [str(column).strip() for column in df.columns]
+
+    timestamp_col = next(
+        (column for column in ("timestamp", "time", "datetime")
+         if column in df.columns),
+        None,
+    )
+    asset_col = next(
+        (column for column in ("unit_id", "asset_id", "equipment_id")
+         if column in df.columns),
+        None,
+    )
+    label_col = "fault_class" if "fault_class" in df.columns else None
+
+    if timestamp_col:
+        df[timestamp_col] = pd.to_datetime(df[timestamp_col], errors="coerce")
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Rows", f"{len(df):,}")
+    metric_cols[1].metric(
+        "Assets",
+        str(df[asset_col].nunique()) if asset_col else "Not identified",
+    )
+    metric_cols[2].metric(
+        "Time range",
+        (
+            f'{df[timestamp_col].min():%Y-%m-%d} to '
+            f'{df[timestamp_col].max():%Y-%m-%d}'
+        )
+        if timestamp_col and df[timestamp_col].notna().any()
+        else "Unavailable",
+    )
+    metric_cols[3].metric(
+        "Columns",
+        str(len(df.columns)),
+    )
+
+    if asset_col:
+        assets = sorted(df[asset_col].dropna().astype(str).unique().tolist())
+        selected_assets = st.multiselect(
+            "Filter equipment",
+            assets,
+            default=assets,
+            key="historian_asset_filter",
+        )
+        df = df[df[asset_col].astype(str).isin(selected_assets)]
+
+    if df.empty:
+        st.info("No rows match the selected equipment.")
+        return
+
+    if label_col:
+        st.markdown("**Supplied fault-label distribution**")
+        counts = (
+            df[label_col]
+            .fillna("Missing label")
+            .astype(str)
+            .value_counts()
+            .rename_axis("Provided label")
+            .reset_index(name="Rows")
+        )
+        st.bar_chart(counts.set_index("Provided label")["Rows"])
+        st.dataframe(counts, width="stretch", hide_index=True)
+        st.warning(
+            "Labels shown here come from the file. Their provenance and "
+            "whether they represent technician-confirmed faults are unknown."
+        )
+    else:
+        st.info("No `fault_class` column was found; label distribution is unavailable.")
+
+    excluded = {
+        timestamp_col, asset_col, label_col, "run_id", "severity"
+    }
+    numeric_cols = [
+        column for column in df.columns
+        if column not in excluded
+        and pd.api.types.is_numeric_dtype(df[column])
+    ]
+
+    if timestamp_col and numeric_cols:
+        st.markdown("**Sensor trends**")
+        chosen_signals = st.multiselect(
+            "Choose numeric signals",
+            numeric_cols,
+            default=numeric_cols[: min(3, len(numeric_cols))],
+            key="historian_signal_filter",
+        )
+        plot_df = df.dropna(subset=[timestamp_col]).sort_values(timestamp_col)
+        if chosen_signals and not plot_df.empty:
+            trend = plot_df.set_index(timestamp_col)[chosen_signals]
+            st.line_chart(trend)
+        elif not chosen_signals:
+            st.caption("Select at least one signal to display its trend.")
+    else:
+        st.info("No usable timestamp and numeric sensor columns were found for trend charts.")
+
+    with st.expander("Preview rows and columns"):
+        st.write("**Columns detected**")
+        st.code(", ".join(df.columns))
+        st.dataframe(df.head(100), width="stretch", hide_index=True)
+
+
+
 st.markdown("##### Registered datasets")
 try:
     ds_list = datasets()
@@ -63,6 +187,8 @@ else:
     options = {f'{d["name"]} ({d["source"]}, {d["n_rows"]} rows)': d["path"] for d in ds_list}
     selected_label = st.selectbox("Select a dataset to act on", list(options.keys()))
     selected_path = options[selected_label]
+
+    render_historian_inspection(selected_path)
 
     col_a, col_b = st.columns(2)
     with col_a:
