@@ -61,11 +61,57 @@ def prepare_features(raw_df: pd.DataFrame, window_length: int = WINDOW_LENGTH_SA
     )
 
 
-def train(dataset_path: str, seed: int = 42, test_size: float = 0.2, val_size: float = 0.15) -> TrainResult:
-    raw_df = ingestion.read_raw(dataset_path)
-    if "run_id" not in raw_df.columns or "fault_class" not in raw_df.columns:
-        raise ValueError("training dataset must include run_id and fault_class columns (see misan.simulate)")
+def _validate_training_dataset(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Reject incompatible datasets before model training starts."""
+    raw_df = ingestion.normalize_source_columns(raw_df)
 
+    required_training = {"run_id", "fault_class", "severity"}
+    missing = sorted(required_training - set(raw_df.columns))
+    if missing:
+        raise ValueError(
+            "Dataset is not ready for training. Missing training columns: "
+            + ", ".join(missing)
+            + ". Use a compatible labelled training dataset. "
+              "Historian files may still be imported for inspection."
+        )
+
+    problems = ingestion.validate_schema(raw_df)
+    if problems:
+        raise ValueError(
+            "Dataset is incompatible with the configured sensor schema: "
+            + "; ".join(problems)
+            + ". Missing physical measurements will not be fabricated."
+        )
+
+    if raw_df.empty:
+        raise ValueError("Training dataset is empty.")
+
+    for column in ("run_id", "fault_class"):
+        values = raw_df[column]
+        if values.isna().any() or values.astype(str).str.strip().eq("").any():
+            raise ValueError(f"Training dataset contains empty {column} values.")
+
+    severity = pd.to_numeric(raw_df["severity"], errors="coerce")
+    if severity.isna().any() or not severity.map(pd.notna).all():
+        raise ValueError("The severity column must contain numeric values.")
+    if not severity.map(lambda value: abs(value) != float("inf")).all():
+        raise ValueError("The severity column must contain finite values.")
+    raw_df["severity"] = severity
+
+    run_count = raw_df["run_id"].nunique()
+    if run_count < 4:
+        raise ValueError(
+            f"Training requires at least 4 distinct run_id groups; found {run_count}."
+        )
+
+    if raw_df["fault_class"].nunique() < 2:
+        raise ValueError("Training requires at least two distinct fault_class labels.")
+
+    return raw_df
+
+
+def train(dataset_path: str, seed: int = 42, test_size: float = 0.2, val_size: float = 0.15) -> TrainResult:
+    raw_df = _validate_training_dataset(ingestion.read_raw(dataset_path))
     feature_df = prepare_features(raw_df)
     if feature_df.empty:
         raise ValueError("no windows could be built — dataset is shorter than the configured window length")

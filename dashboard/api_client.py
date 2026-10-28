@@ -31,14 +31,34 @@ def _get(path: str, **params):
     return resp.json()
 
 
+
 def _post(path: str, json_body=None, files=None, params=None):
     try:
-        resp = requests.post(f"{BASE_URL}{path}", json=json_body, files=files, params=params, headers=_headers(), timeout=60)
+        resp = requests.post(
+            f"{BASE_URL}{path}",
+            json=json_body,
+            files=files,
+            params=params,
+            headers=_headers(),
+            timeout=300 if path == "/train" else 60,
+        )
+    except requests.Timeout as exc:
+        raise ApiError(
+            504,
+            "The request timed out. The server may still be processing it. "
+            "Do not retry training until you check /health and the model version."
+        ) from exc
     except requests.ConnectionError as exc:
-        raise ApiError(503, "cannot reach the Misan API — is it running? (`python -m misan.cli serve`)") from exc
+        raise ApiError(
+            503,
+            "Cannot reach the Misan API — is it running? "
+            "(`python -m misan.cli serve`)"
+        ) from exc
+
     if resp.status_code >= 400:
         raise ApiError(resp.status_code, _safe_json(resp))
     return resp.json()
+
 
 
 def _safe_json(resp):
