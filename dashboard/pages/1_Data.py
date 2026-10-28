@@ -173,6 +173,52 @@ def render_historian_inspection(dataset_path: str) -> None:
 
 
 
+
+
+def render_exploratory_sensor_summary(df: pd.DataFrame) -> None:
+    """Summarize available readings without claiming a trained diagnosis."""
+    st.markdown("##### Exploratory sensor analysis")
+    st.info(
+        "The selected dataset does not match the active model's required "
+        "sensor schema. No model diagnosis was performed. This summary uses "
+        "only measurements present in the file and is not a verified diagnosis."
+    )
+
+    excluded = {
+        "timestamp", "time", "datetime", "asset_id", "unit_id",
+        "equipment_id", "run_id", "fault_class", "severity",
+    }
+    numeric_cols = [
+        column for column in df.columns
+        if column not in excluded
+        and pd.api.types.is_numeric_dtype(df[column])
+    ]
+
+    if not numeric_cols:
+        st.info("No numeric sensor measurements were found in this dataset.")
+        return
+
+    summary = df[numeric_cols].describe().T
+    summary["missing_values"] = df[numeric_cols].isna().sum()
+    summary["available_values"] = df[numeric_cols].count()
+    summary.index.name = "Sensor"
+
+    st.markdown("**Available measurement statistics**")
+    st.dataframe(summary.round(3), width="stretch")
+
+    selected_signal = st.selectbox(
+        "Inspect a sensor signal",
+        numeric_cols,
+        key="exploratory_diagnosis_signal",
+    )
+    values = pd.to_numeric(df[selected_signal], errors="coerce")
+    st.line_chart(values.reset_index(drop=True))
+    st.caption(
+        "The chart follows file row order. Confirm timestamps and sampling "
+        "intervals before interpreting changes."
+    )
+
+
 st.markdown("##### Registered datasets")
 try:
     ds_list = datasets()
@@ -214,34 +260,95 @@ else:
         if st.button("Run diagnosis"):
             try:
                 raw_df = ingestion.read_raw(selected_path)
-                problems = ingestion.validate_schema(raw_df)
-                if problems:
-                    st.error("; ".join(problems))
+
+                if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+                    st.warning(
+                        "This dataset contains no readable rows. Import a "
+                        "non-empty CSV or Parquet file and try again."
+                    )
                 else:
-                    clean_df, _ = ingestion.clean(raw_df)
-                    # Group by run_id when present: multiple simulated runs can share the
-                    # same asset_id, and grouping by asset_id alone would interleave them.
-                    group_col = "run_id" if "run_id" in clean_df.columns else "asset_id"
-                    produced = 0
-                    for group_key, group in clean_df.groupby(group_col):
-                        if produced >= max_windows:
-                            break
-                        window = group.sort_values("timestamp").tail(WINDOW_LENGTH_SAMPLES)
-                        if len(window) < WINDOW_LENGTH_SAMPLES:
-                            continue
-                        real_asset = window["asset_id"].iloc[-1] if "asset_id" in window.columns else str(group_key)
-                        label = f"{real_asset}::{group_key}" if group_col == "run_id" else str(group_key)
-                        timestamps = window["timestamp"].astype(str).tolist()
-                        readings = {s: window[s].astype(float).tolist() for s in SENSOR_NAMES}
-                        record = diagnose(label, timestamps, readings)
-                        produced += 1
-                        with st.expander(f'{label} → {record["fault_class"]} ({record["confidence"]:.0%})'):
-                            st.json(record)
-                    if produced == 0:
-                        st.warning(f"No run/asset in this file has at least {WINDOW_LENGTH_SAMPLES} samples.")
+                    raw_df = ingestion.normalize_source_columns(raw_df)
+                    problems = ingestion.validate_schema(raw_df)
+
+                    if problems:
+                        st.warning(
+                            "The active model cannot diagnose this dataset "
+                            "because its required input schema is not satisfied."
+                        )
+                        with st.expander("Why model diagnosis was skipped"):
+                            for problem in problems:
+                                st.write(f"- {problem}")
+                        render_exploratory_sensor_summary(raw_df)
                     else:
-                        st.success(f"Produced {produced} diagnostic record(s) — see Overview for the latest.")
+                        clean_df, _ = ingestion.clean(raw_df)
+                        group_col = (
+                            "run_id" if "run_id" in clean_df.columns
+                            else "asset_id"
+                        )
+                        produced = 0
+
+                        for group_key, group in clean_df.groupby(group_col):
+                            if produced >= int(max_windows):
+                                break
+
+                            window = group.sort_values("timestamp").tail(
+                                WINDOW_LENGTH_SAMPLES
+                            )
+                            if len(window) < WINDOW_LENGTH_SAMPLES:
+                                continue
+
+                            real_asset = (
+                                window["asset_id"].iloc[-1]
+                                if "asset_id" in window.columns
+                                else str(group_key)
+                            )
+                            label = (
+                                f"{real_asset}::{group_key}"
+                                if group_col == "run_id" else str(group_key)
+                            )
+                            timestamps = window["timestamp"].astype(str).tolist()
+                            readings = {
+                                sensor: window[sensor].astype(float).tolist()
+                                for sensor in SENSOR_NAMES
+                            }
+
+                            record = diagnose(label, timestamps, readings)
+                            produced += 1
+                            fault_class = record.get("fault_class", "Unknown")
+                            confidence = record.get("confidence")
+                            confidence_text = (
+                                f"{confidence:.0%}"
+                                if isinstance(confidence, (int, float))
+                                else "Unavailable"
+                            )
+
+                            with st.expander(
+                                f"{label} → {fault_class} ({confidence_text})"
+                            ):
+                                st.json(record)
+
+                        if produced == 0:
+                            st.info(
+                                "No asset or run has a complete window of "
+                                f"{WINDOW_LENGTH_SAMPLES} samples. Select a "
+                                "dataset with more readings per asset or run."
+                            )
+                        else:
+                            st.success(
+                                f"Completed {produced} model diagnosis request(s). "
+                                "See Overview for the latest records."
+                            )
+
             except ApiError as exc:
-                st.error(str(exc))
-            except Exception as exc:  # noqa: BLE001 — surface any pipeline error to the user, never hide it
-                st.error(str(exc))
+                if exc.status_code == 422:
+                    st.warning(
+                        "The API could not process this diagnosis request. "
+                        "Check the dataset schema, timestamps, and sensor values."
+                    )
+                else:
+                    st.error(str(exc))
+            except Exception as exc:  # noqa: BLE001
+                st.warning(
+                    "The analysis could not be completed. Check that the "
+                    f"dataset is readable and try again ({type(exc).__name__})."
+                )

@@ -42,24 +42,62 @@ if st.button("Run evaluation on the active model"):
             summary = evaluate(active["version"])
             st.success("Evaluation complete.")
         except ApiError as exc:
-            st.error(str(exc))
+            if exc.status_code == 422:
+                st.warning(
+                    "The evaluation request could not be processed. "
+                    "Check that the active model and evaluation dataset are valid."
+                )
+            else:
+                st.error(str(exc))
+            summary = None
+        except Exception as exc:
+            st.error(
+                "Evaluation could not be completed. "
+                f"Please check the service and try again ({type(exc).__name__})."
+            )
             summary = None
     if summary:
         st.session_state["last_summary"] = summary
 
 try:
     past_runs = evaluations(limit=10)
-except ApiError:
+except ApiError as exc:
     past_runs = []
+    st.warning(f"Previous evaluation records could not be loaded: {exc}")
 
 summary = st.session_state.get("last_summary")
 if summary is None and past_runs:
-    summary = past_runs[0]["summary"]
+    latest = past_runs[0]
+    if isinstance(latest, dict):
+        summary = latest.get("summary")
 
-if not summary:
-    st.markdown(
-        '<div class="misan-card">Benchmarking has not yet been performed for this model.</div>',
-        unsafe_allow_html=True,
+if not isinstance(summary, dict) or not summary:
+    st.info(
+        "No usable evaluation summary is available yet. Run an evaluation "
+        "when the active model and test dataset are ready."
+    )
+    st.stop()
+
+required_metrics = {
+    "macro_f1",
+    "baseline_macro_f1",
+    "false_alarm_rate",
+    "calibration_error",
+    "inference_time_ms",
+    "per_class",
+    "confusion_matrix",
+    "noise_robustness",
+    "physics_confirmation_rate",
+    "physics_rejection_rate",
+    "baseline_false_alarm_rate",
+    "n_test_windows",
+    "generated_at",
+}
+missing_metrics = sorted(required_metrics - summary.keys())
+if missing_metrics:
+    st.warning(
+        "The evaluation result is incomplete, so the report cannot be "
+        "displayed safely. Missing fields: " + ", ".join(missing_metrics)
     )
     st.stop()
 

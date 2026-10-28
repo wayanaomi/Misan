@@ -68,3 +68,57 @@ def test_clean_rejects_bad_schema():
     df = _sample_df().drop(columns=["asset_id"])
     with pytest.raises(ValueError):
         ingestion.clean(df)
+
+
+def test_normalize_historian_source_columns():
+    source = pd.DataFrame({
+        "timestamp": ["2026-10-12 00:00:00"],
+        "unit_id": ["RTU-01"],
+        "suction_pressure_kpa": [868.5],
+        "discharge_pressure_kpa": [2243.5],
+        "suction_temp_c": [12.3],
+        "discharge_temp_c": [68.96],
+        "compressor_power_kw": [5.34],
+        "ambient_temp_c": [24.82],
+        "fault_class": ["NORMAL"],
+    })
+
+    normalized = ingestion.normalize_source_columns(source)
+
+    assert normalized.loc[0, "asset_id"] == "RTU-01"
+    assert normalized.loc[0, "suction_pressure"] == 868.5
+    assert normalized.loc[0, "discharge_pressure"] == 2243.5
+    assert normalized.loc[0, "suction_temperature"] == 12.3
+    assert normalized.loc[0, "discharge_temperature"] == 68.96
+    assert normalized.loc[0, "compressor_power"] == 5.34
+    assert normalized.loc[0, "ambient_temperature"] == 24.82
+    assert "unit_id" in source.columns
+    assert "asset_id" not in source.columns
+
+
+def test_historian_still_rejected_for_missing_physical_signals():
+    source = pd.DataFrame({
+        "timestamp": ["2026-10-12 00:00:00"],
+        "unit_id": ["RTU-01"],
+        "suction_pressure_kpa": [868.5],
+        "discharge_pressure_kpa": [2243.5],
+        "suction_temp_c": [12.3],
+        "discharge_temp_c": [68.96],
+        "compressor_power_kw": [5.34],
+        "ambient_temp_c": [24.82],
+        "fault_class": ["NORMAL"],
+    })
+
+    normalized = ingestion.normalize_source_columns(source)
+    problems = ingestion.validate_schema(normalized)
+
+    assert not any("asset_id" in problem for problem in problems)
+    for missing_signal in (
+        "condenser_inlet_temperature",
+        "condenser_outlet_temperature",
+        "evaporator_inlet_temperature",
+        "evaporator_outlet_temperature",
+        "refrigerant_mass_flow",
+        "load_setpoint",
+    ):
+        assert any(missing_signal in problem for problem in problems)
