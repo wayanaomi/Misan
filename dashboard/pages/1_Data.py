@@ -30,17 +30,23 @@ uploaded = st.file_uploader("Upload sensor data", type=["csv", "parquet"])
 if uploaded is not None and st.button("Import"):
     try:
         result = import_dataset(uploaded.name, uploaded.getvalue())
-        st.success(f'Imported {result["n_rows"]} rows (dataset id {result["dataset_id"]}).')
-        q = result["data_quality"]
-        st.json(q)
+        if not isinstance(result, dict) or not {"n_rows", "dataset_id"}.issubset(result):
+            raise ValueError("The API returned an incomplete import response.")
 
-        compatible = result.get("compatible_with_current_model", True)
-        if compatible:
+        st.success(
+            f'Imported {result["n_rows"]} rows '
+            f'(dataset id {result["dataset_id"]}).'
+        )
+
+        if result.get("data_quality") is not None:
+            st.json(result["data_quality"])
+
+        if result.get("compatible_with_current_model") is True:
             st.success("Dataset schema is compatible with the current model.")
         else:
             st.warning(
-                "Dataset imported for inspection only. It cannot be used for diagnosis "
-                "with the current model until the missing sensor signals are addressed."
+                "Dataset imported for inspection only. Model compatibility was not "
+                "confirmed, so do not use it for diagnosis or training."
             )
 
         schema_report = result.get("schema_report")
@@ -49,6 +55,11 @@ if uploaded is not None and st.button("Import"):
             st.json(schema_report)
     except ApiError as exc:
         st.error(str(exc))
+    except Exception as exc:
+        st.error(
+            "Import could not be completed. Check the file format and API service, "
+            f"then try again ({type(exc).__name__})."
+        )
 
 
 def render_historian_inspection(dataset_path: str) -> None:
@@ -243,14 +254,52 @@ else:
         if st.button("Train on selected dataset"):
             with st.spinner("Training — splitting by run, comparing model families, calibrating..."):
                 try:
-                    result = train(selected_path)
-                    st.success(
-                        f'Trained {result["version"]} ({result["chosen_model"]}), '
-                        f'validation macro-F1 {result["validation_macro_f1"]:.3f}'
-                    )
-                    st.json(result["all_candidate_scores"])
+                    training_df = ingestion.read_raw(selected_path)
+                    if not isinstance(training_df, pd.DataFrame) or training_df.empty:
+                        st.warning("Training was skipped: the selected dataset is empty or unreadable.")
+                    else:
+                        training_df = ingestion.normalize_source_columns(training_df)
+                        schema_problems = ingestion.validate_schema(training_df)
+                        required_columns = {"run_id", "fault_class", "severity"}
+                        missing_columns = sorted(required_columns - set(training_df.columns))
+
+                        if schema_problems or missing_columns:
+                            st.warning(
+                                "Training was skipped because the selected dataset does not "
+                                "meet the model's training requirements."
+                            )
+                            with st.expander("Why training was skipped"):
+                                for problem in schema_problems:
+                                    st.write(f"- {problem}")
+                                for column in missing_columns:
+                                    st.write(f"- Missing required training column: {column}")
+                        else:
+                            result = train(selected_path)
+                            required = {
+                                "version", "chosen_model",
+                                "validation_macro_f1", "all_candidate_scores"
+                            }
+                            if not isinstance(result, dict) or not required.issubset(result):
+                                raise ValueError("The API returned an incomplete training response.")
+
+                            score = float(result["validation_macro_f1"])
+                            if not 0 <= score <= 1:
+                                raise ValueError("The API returned an invalid validation score.")
+
+                            st.success(
+                                f'Trained {result["version"]} ({result["chosen_model"]}), '
+                                f'validation macro-F1 {score:.3f}'
+                            )
+                            st.json(result["all_candidate_scores"])
                 except ApiError as exc:
                     st.error(str(exc))
+                except Exception as exc:
+                    st.error(
+                        "Training could not be completed or returned an invalid response. "
+                        "Check the dataset and active model before retrying "
+                        f"({type(exc).__name__})."
+                    )
+
 
     with col_b:
         st.markdown("**Diagnose latest window per run/asset**")

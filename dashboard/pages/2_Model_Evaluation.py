@@ -101,6 +101,68 @@ if missing_metrics:
     )
     st.stop()
 
+import math
+
+numeric_metrics = (
+    "macro_f1", "baseline_macro_f1", "false_alarm_rate",
+    "baseline_false_alarm_rate", "calibration_error", "inference_time_ms",
+    "physics_confirmation_rate", "physics_rejection_rate",
+)
+for metric in numeric_metrics:
+    value = summary.get(metric)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        st.error(f"The evaluation report contains an invalid numeric value for {metric}.")
+        st.stop()
+
+for metric in (
+    "macro_f1", "baseline_macro_f1", "false_alarm_rate",
+    "baseline_false_alarm_rate", "physics_confirmation_rate",
+    "physics_rejection_rate",
+):
+    if not 0 <= summary[metric] <= 1:
+        st.error(f"The evaluation report contains an out-of-range value for {metric}.")
+        st.stop()
+
+if summary["calibration_error"] < 0 or summary["inference_time_ms"] < 0:
+    st.error("The evaluation report contains a negative calibration error or inference time.")
+    st.stop()
+
+for field in ("per_class", "confusion_matrix", "noise_robustness"):
+    if not isinstance(summary.get(field), dict):
+        st.error(f"The evaluation report contains invalid chart data for {field}.")
+        st.stop()
+
+if not isinstance(summary.get("n_test_windows"), int) or summary["n_test_windows"] < 0:
+    st.error("The evaluation report contains an invalid test-window count.")
+    st.stop()
+
+if any(
+    isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+    for value in summary["noise_robustness"].values()
+):
+    st.error("The evaluation report contains invalid noise-robustness values.")
+    st.stop()
+
+if any(
+    not isinstance(row, dict)
+    or any(
+        isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+        for value in row.values()
+    )
+    for row in summary["per_class"].values()
+):
+    st.error("The evaluation report contains invalid per-class metrics.")
+    st.stop()
+
+if any(
+    not isinstance(row, dict)
+    or any(isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0
+           for value in row.values())
+    for row in summary["confusion_matrix"].values()
+):
+    st.error("The evaluation report contains an invalid confusion matrix.")
+    st.stop()
+
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Macro-F1", f'{summary["macro_f1"]:.3f}', delta=f'{summary["macro_f1"] - summary["baseline_macro_f1"]:+.3f} vs baseline')
 c2.metric("False-alarm rate", f'{summary["false_alarm_rate"]:.1%}')

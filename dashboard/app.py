@@ -62,6 +62,36 @@ if not diagnostics:
 
 latest = diagnostics[0]
 
+required_diagnostic_fields = {
+    "fault_class", "fault_detected", "model_version", "component",
+    "asset_id", "timestamp", "confidence", "validation_status", "explanation"
+}
+if not isinstance(latest, dict) or not required_diagnostic_fields.issubset(latest):
+    st.error("The latest diagnostic response is incomplete. Refresh or check the API service.")
+    st.stop()
+
+if not isinstance(latest["confidence"], (int, float)) or not 0 <= latest["confidence"] <= 1:
+    st.error("The latest diagnostic contains an invalid confidence value.")
+    st.stop()
+
+if latest.get("severity_level") not in (None, "low", "medium", "high"):
+    st.error("The latest diagnostic contains an unrecognized severity value.")
+    st.stop()
+
+if latest.get("validation_status") not in ("confirmed", "rejected", "unchecked"):
+    st.error("The latest diagnostic contains an unrecognized physics-validation status.")
+    st.stop()
+
+features = latest.get("top_features", [])
+if not isinstance(features, list) or any(
+    not isinstance(feature, dict)
+    or not {"feature", "direction", "weight"}.issubset(feature)
+    or not isinstance(feature.get("weight"), (int, float))
+    for feature in features
+):
+    st.warning("Feature explanations are unavailable because the API returned invalid feature data.")
+    latest["top_features"] = []
+
 if latest["fault_class"] == "NORMAL":
     system_status = "normal"
 elif latest["fault_detected"]:
